@@ -376,10 +376,5 @@ void Server::quitCleanup(Client &c, const std::string &reason)
         c.channels.erase(chans[i]);            /* Removes channel from client */
         if (ch.members.empty())
             channels.erase(it); /* Deletes empty channel */
-        else if (ch.ops.empty())
-        {
-            int promote = *ch.members.begin(); /* Get first member */
-            ch.addOp(promote);                 /* Promote to operator */
-        }
     }
 }
