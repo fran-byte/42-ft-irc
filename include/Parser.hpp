@@ -20,16 +20,18 @@ struct Cmd
 inline Cmd parseIrcLine(const std::string &line)
 {
     Cmd out;
-    std::string s = line, trailing;
+    std::string s = line;
+    std::string trailing;
+
     /* Extract trailing parameter (after " :") */
     std::string::size_type p = s.find(" :");
-    if (p != std::string::npos)
+    if (p != std::string::npos) /*npos (whithout position?) not+not*/
     {
-        trailing = s.substr(p + 2);
-        s.erase(p);
+        trailing = s.substr(p + 2); /*trailing*/
+        s.erase(p);                 /*whitout trailing*/
     }
     /* Split remaining string into tokens */
-    std::istringstream iss(s);
+    std::istringstream iss(s); /* Convert the string into a stream for easy tokenization */
     iss >> out.verb;
     for (std::string tok; iss >> tok;)
         out.args.push_back(tok);

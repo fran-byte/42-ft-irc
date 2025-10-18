@@ -8,8 +8,14 @@
 void Server::cmdJOIN(Client &c, const std::vector<std::string> &a)
 {
     if (a.empty())
-        return sendTo(c, ":server NOTICE " + (c.nick.empty() ? "*" : c.nick) + " :JOIN needs channel\r\n");
-
+    {
+        std::string nickname;
+        if (c.nick.empty())
+            nickname = "*";
+        else
+            nickname = c.nick;
+        return sendTo(c, ":server NOTICE " + nickname + " :JOIN needs channel\r\n");
+    }
     std::string chan = a[0];
     /* Validate channel name starts with # */
     if (chan.empty() || chan[0] != '#')
@@ -42,7 +48,12 @@ void Server::cmdJOIN(Client &c, const std::vector<std::string> &a)
         ch.addOp(c.fd);
 
     /* Notify all channel members */
-    std::string joinMsg = ":" + (c.nick.empty() ? "*" : c.nick) + " JOIN " + chan + "\r\n";
+    std::string nickname;
+    if (c.nick.empty())
+        nickname = "*";
+    else
+        nickname = c.nick;
+    std::string joinMsg = ":" + nickname + " JOIN " + chan + "\r\n";
     broadcastToChannel(ch, -1, joinMsg); /* Send to everyone including joiner */
 }
 
@@ -54,8 +65,14 @@ void Server::cmdJOIN(Client &c, const std::vector<std::string> &a)
 void Server::cmdPART(Client &c, const std::vector<std::string> &a)
 {
     if (a.empty())
-        return sendTo(c, ":server NOTICE " + (c.nick.empty() ? "*" : c.nick) + " :PART needs channel\r\n");
-
+    {
+        std::string nickname;
+        if (c.nick.empty())
+            nickname = "*";
+        else
+            nickname = c.nick;
+        return sendTo(c, ":server NOTICE " + nickname + " :PART needs channel\r\n");
+    }
     std::string chan = a[0];
     /* Check if channel exists */
     std::map<std::string, Channel>::iterator it = channels.find(chan);

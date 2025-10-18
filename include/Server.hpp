@@ -18,9 +18,9 @@ public:
     void run();
 
     /* === Command handlers === */
-    void handleCommand(Client &c, const Cmd &cmd);
+    void handleCommand(Client &c, const Cmd &cmd, Server &srv);
     void cmdPASS(Client &c, const std::vector<std::string> &a);
-    void cmdNICK(Client &c, const std::vector<std::string> &a);
+    void cmdNICK(Client &c, const std::vector<std::string> &a, Server &srv);
     void cmdUSER(Client &c, const std::vector<std::string> &a);
     void cmdPING(Client &c, const std::vector<std::string> &a);
     void cmdQUIT(Client &c, const std::vector<std::string> &a);
@@ -42,6 +42,7 @@ private:
     std::vector<struct pollfd> pfds;         /* Poll file descriptors for I/O multiplexing */
     std::map<int, Client> clients;           /* Connected clients by file descriptor */
     std::map<std::string, Channel> channels; /* Active channels by name */
+    static const size_t MAX_CLIENTS = 100;
 
     /* === Network initialization and management === */
     void initListen(unsigned short port);
@@ -56,3 +57,5 @@ private:
     void broadcastToChannel(const Channel &ch, int fromFd, const std::string &msg);
     void quitCleanup(Client &c, const std::string &reason);
 };
+
+void introServer();

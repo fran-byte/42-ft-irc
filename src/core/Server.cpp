@@ -9,6 +9,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <cstdlib>
+#include <csignal>
+#include <iostream>
 
 /**
  * @brief Constructs server instance and initializes listening socket
@@ -23,7 +26,7 @@ Server::Server(unsigned short port, const std::string &pwd)
     p.fd = listen_fd;
     p.events = POLLIN; /* listening socket for incoming connections */
     p.revents = 0;     /* NO events*/
-    pfds.push_back(p);
+    pfds.push_back(p); /* fd[0] = Structure: SERVER*/
 }
 
 /**
@@ -32,7 +35,21 @@ Server::Server(unsigned short port, const std::string &pwd)
 Server::~Server()
 {
     if (listen_fd >= 0)
+    {
         ::close(listen_fd);
+        std::cerr << "🔒 Closed \033[1;32mSERVER\033[0m socket fd=" << listen_fd << std::endl;
+    }
+
+    for (std::map<int, Client>::iterator it = clients.begin(); it != clients.end(); ++it)
+    {
+        ::close(it->first);
+        std::cerr << "🔒 Closed client socket fd=" << it->first << std::endl;
+    }
+    clients.clear();
+    pfds.clear();
+    std::cout << std::endl;
+    std::cerr << "   \033[1;32mServer cleanup complete.\033[0m" << std::endl;
+    std::cout << std::endl;
 }
 
 /**
@@ -41,10 +58,7 @@ Server::~Server()
  */
 void Server::setNonBlocking(int fd)
 {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0)
-        flags = 0;
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    fcntl(fd, F_SETFL, O_NONBLOCK);
 }
 
 /**
@@ -54,7 +68,8 @@ void Server::setNonBlocking(int fd)
 void Server::initListen(unsigned short port)
 {
     listen_fd = ::socket(AF_INET, SOCK_STREAM, 0); /* Protocol: IPv4, Socket type: TCP, Protocol: default (0) */
-    throw std::runtime_error("socket failed");
+    if (listen_fd < 0)
+        throw std::runtime_error("socket failed");
     int yes = 1;
     ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)); /*SO_REUSEADDR: Prevents Error: Address already in use*/
     sockaddr_in addr;                                                     /*COMMS structure family, addr, port*/
@@ -64,7 +79,7 @@ void Server::initListen(unsigned short port)
     addr.sin_port = htons(port);
     if (::bind(listen_fd, (sockaddr *)&addr, sizeof(addr)) < 0) /*Associate the socket with the address*/
         throw std::runtime_error("bind failed");
-    if (::listen(listen_fd, 128) < 0) /*Listen for connections (max 128 pending)*/
+    if (::listen(listen_fd, 128) < 0) /*Listen(state) for connections (max 128 pending)*/
         throw std::runtime_error("listen failed");
     setNonBlocking(listen_fd);
 }
@@ -74,13 +89,17 @@ void Server::initListen(unsigned short port)
  */
 void Server::run()
 {
-    for (;;)
+    extern volatile sig_atomic_t g_shutdown;
+    for (; !g_shutdown;)
     {
         /* Set poll events: always POLLIN, +POLLOUT if data pending to send */
         for (size_t i = 1; i < pfds.size(); ++i)
         {
             int fd = pfds[i].fd;
-            pfds[i].events = clients[fd].sendBuf.empty() ? POLLIN : (POLLIN | POLLOUT);
+            if (clients[fd].sendBuf.empty())
+                pfds[i].events = POLLIN; /*monitor READ*/
+            else
+                pfds[i].events = POLLIN | POLLOUT; /*monitor READ and WRITE*/
         }
 
         /* Wait for events on all file descriptors (infinite timeout) */
@@ -88,7 +107,11 @@ void Server::run()
         if (n < 0)
         {
             if (errno == EINTR)
+            {
+                if (g_shutdown)
+                    break; // ← Salir si recibimos señal durante poll
                 continue;
+            }
             throw std::runtime_error("poll failed");
         }
 
@@ -100,7 +123,7 @@ void Server::run()
         for (size_t i = 1; i < pfds.size(); ++i)
         {
             short ev = pfds[i].revents;
-            if (ev & (POLLERR | POLLHUP | POLLNVAL))
+            if (ev & (POLLERR | POLLHUP | POLLNVAL)) /* Socket Err/Close/Invalid*/
             {
                 disconnect(i--);
                 continue;
@@ -138,22 +161,36 @@ void Server::acceptNew()
 {
     for (;;)
     {
-        int cfd = ::accept(listen_fd, NULL, NULL); /*extracts the first pending connection from the listening socket's queue*/
+        int cfd = ::accept(listen_fd, NULL, NULL); /*Extract pending connection from server and assign a client fd*/
         if (cfd < 0)
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
+            if (errno == EMFILE || errno == ENFILE || errno == ENOMEM)
+            {
+                std::cerr << "⚠️  Maximum connections reached  (errno=" << errno << ": " << strerror(errno) << ")" << std::endl;
+                break;
+            }
             std::perror("accept");
             break;
         }
+
+        /* Maximum client ? */
+        if (clients.size() >= MAX_CLIENTS)
+        {
+            std::cerr << "⚠️  Maximum client limit reached (" << clients.size() << "), rejecting connection" << std::endl;
+            ::close(cfd);
+            break;
+        }
+
         setNonBlocking(cfd);
-        clients.insert(std::make_pair(cfd, Client(cfd))); /*Maps (fd → Client) and inserts into clients structure*/
+        clients.insert(std::make_pair(cfd, Client(cfd))); /*void client-> Client{fd=6, nick="", ...}*/
         struct pollfd p;
         p.fd = cfd;
         p.events = POLLIN;
         p.revents = 0;
-        pfds.push_back(p);
-        std::fprintf(stderr, "Nuevo cliente (fd=%d)\n", cfd);
+        pfds.push_back(p); /*inset new client into pdfs*/
+        std::cerr << "🟢 New client (fd=" << cfd << ", total=" << clients.size() << ")" << std::endl;
     }
 }
 
@@ -173,14 +210,14 @@ void Server::handleRead(size_t idx)
         {
             c.recvBuf.append(buf, r);
             std::string::size_type pos;
-            while ((pos = c.recvBuf.find("\r\n")) != std::string::npos)
+            while ((pos = c.recvBuf.find("\r\n")) != std::string::npos) /* if exist pos(\r\n) */
             {
                 std::string line = c.recvBuf.substr(0, pos);
                 c.recvBuf.erase(0, pos + 2);
                 onLine(c, line); /* Process complete IRC line */
             }
         }
-        else if (r == 0) /*client disconnected*/
+        else if (r == 0) /*client (socket) disconnected*/
         {
             disconnect(idx);
             return;
@@ -194,7 +231,6 @@ void Server::handleRead(size_t idx)
         }
     }
 }
-
 /**
  * @brief Sends pending data from client's send buffer
  * @param idx Index of client in pollfd vector
@@ -216,7 +252,7 @@ void Server::handleWrite(size_t idx)
             return;
         }
     }
-    pfds[idx].events &= ~POLLOUT; // Clears the POLLOUT bit to stop monitoring write readiness
+    pfds[idx].events = pfds[idx].events & ~POLLOUT; /* Clears (only) the POLLOUT bit to stop monitoring write readiness*/
 }
 
 /**
@@ -229,9 +265,21 @@ void Server::disconnect(size_t idx)
 
     /* Clean up channels if client was still member */
     std::map<int, Client>::iterator it = clients.find(fd);
-    if (it != clients.end() && !it->second.channels.empty()) /*NOT is the .end & NOT is .empty*/
-        quitCleanup(it->second, "Connection closed");
-    ::close(fd);
+    if (it != clients.end())
+    {
+        Client &c = it->second;
+        if (!c.nick.empty() || !c.user.empty() || !c.realname.empty())
+            std::cerr << "🔴 Client disconnected: NICK: " << c.nick
+                      << " USER: " << c.user
+                      << " REALNAME: " << c.realname
+                      << " (fd=" << fd << ", total=" << (clients.size() - 1) << ")" << std::endl;
+        else
+            std::cerr << "🔴 Client disconnected: fd=" << fd << " (total=" << (clients.size() - 1) << ")" << std::endl;
+
+        if (!c.channels.empty()) /*NOT is the .end & NOT is .empty*/
+            quitCleanup(c, "🔒 Connection closed");
+    }
+    ::close(fd); /* 🔒 */
     clients.erase(fd);
     pfds[idx] = pfds.back(); /* Replace target with last element (swap) */
     pfds.pop_back();         /* Remove last element (now duplicated) */
@@ -270,7 +318,7 @@ void Server::markWrite(int fd)
 void Server::onLine(Client &c, const std::string &line)
 {
     Cmd cmd = parseIrcLine(line);
-    handleCommand(c, cmd);
+    handleCommand(c, cmd, *this);
 }
 
 /**
@@ -311,8 +359,12 @@ void Server::broadcastToChannel(const Channel &ch, int fromFd, const std::string
  */
 void Server::quitCleanup(Client &c, const std::string &reason)
 {
-    const std::string quitMsg = ":" + (c.nick.empty() ? "*" : c.nick) + " QUIT :" + reason + "\r\n";
-    std::vector<std::string> chans(c.channels.begin(), c.channels.end()); /*Copy channels*/
+    std::string quitMsg;
+    if (c.nick.empty())
+        quitMsg = ":* QUIT :" + reason + "\r\n";
+    else
+        quitMsg = ":" + c.nick + " QUIT :" + reason + "\r\n";
+    std::vector<std::string> chans(c.channels.begin(), c.channels.end()); /*Copy name-channels [c.channels]*/
     for (size_t i = 0; i < chans.size(); ++i)
     {
         std::map<std::string, Channel>::iterator it = channels.find(chans[i]); /* Find channel in server */
@@ -320,10 +372,10 @@ void Server::quitCleanup(Client &c, const std::string &reason)
             continue;
         Channel &ch = it->second;              /* Get channel reference*/
         broadcastToChannel(ch, c.fd, quitMsg); /* Notify all channel members */
-        ch.removeMember(c.fd);
-        c.channels.erase(chans[i]);
+        ch.removeMember(c.fd);                 /* Removes client from channel */
+        c.channels.erase(chans[i]);            /* Removes channel from client */
         if (ch.members.empty())
-            channels.erase(it);
+            channels.erase(it); /* Deletes empty channel */
         else if (ch.ops.empty())
         {
             int promote = *ch.members.begin(); /* Get first member */

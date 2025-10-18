@@ -57,7 +57,11 @@ void Server::cmdKICK(Client &c, const std::vector<std::string> &a)
 
     const std::string &chan = a[0];
     const std::string &nick = a[1];
-    std::string reason = (a.size() >= 3) ? a[2] : "Kicked";
+    std::string reason;
+    if (a.size() >= 3)
+        reason = a[2];
+    else
+        reason = "Kicked";
 
     /* Check if channel exists */
     std::map<std::string, Channel>::iterator it = channels.find(chan);

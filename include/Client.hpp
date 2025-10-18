@@ -15,5 +15,6 @@ struct Client
     std::set<std::string> channels;   /* Channels client has joined */
 
     Client() : fd(-1), passOk(false), registered(false), closing(false) {}
+    /*Constructor*/
     explicit Client(int f) : fd(f), passOk(false), registered(false), closing(false) {}
 };

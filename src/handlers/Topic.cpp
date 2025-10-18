@@ -18,7 +18,11 @@ void Server::cmdTOPIC(Client &c, const std::vector<std::string> &a)
     /* Display current topic if no new topic provided */
     if (a.size() == 1)
     {
-        std::string t = ch.topic.empty() ? "No topic is set" : ch.topic;
+        std::string t;
+        if (ch.topic.empty())
+            t = "No topic is set";
+        else
+            t = ch.topic;
         return sendTo(c, ":server NOTICE " + c.nick + " :" + chan + " : " + t + "\r\n");
     }
 

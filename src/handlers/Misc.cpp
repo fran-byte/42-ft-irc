@@ -7,7 +7,11 @@
  */
 void Server::cmdPING(Client &c, const std::vector<std::string> &a)
 {
-    std::string token = a.empty() ? "" : a.back();
+    std::string token;
+    if (a.empty())
+        token = "";
+    else
+        token = a.back();
     sendTo(c, ":server PONG :" + token + "\r\n");
 }
 
@@ -18,9 +22,13 @@ void Server::cmdPING(Client &c, const std::vector<std::string> &a)
  */
 void Server::cmdQUIT(Client &c, const std::vector<std::string> &a)
 {
-    const std::string reason = a.empty() ? "Client Quit" : a.back();
+    std::string reason;
+    if (a.empty())
+        reason = "Client Quit";
+    else
+        reason = a.back();
     quitCleanup(c, reason);
-    /* Mark client for graceful disconnect after sending pending data */
+    // Mark client for graceful disconnect after sending pending data
     c.closing = true;
 }
 
@@ -29,7 +37,7 @@ void Server::cmdQUIT(Client &c, const std::vector<std::string> &a)
  * @param c Client sending the command
  * @param cmd Parsed command structure containing verb and arguments
  */
-void Server::handleCommand(Client &c, const Cmd &cmd)
+void Server::handleCommand(Client &c, const Cmd &cmd, Server &srv)
 {
     /* Handle connection maintenance commands for all clients */
     if (cmd.verb == "PING")
@@ -43,7 +51,7 @@ void Server::handleCommand(Client &c, const Cmd &cmd)
         if (cmd.verb == "PASS")
             return cmdPASS(c, cmd.args);
         if (cmd.verb == "NICK")
-            return cmdNICK(c, cmd.args);
+            return cmdNICK(c, cmd.args, srv);
         if (cmd.verb == "USER")
             return cmdUSER(c, cmd.args);
         return sendTo(c, ":server NOTICE * :Register first (PASS/NICK/USER)\r\n");
@@ -66,5 +74,8 @@ void Server::handleCommand(Client &c, const Cmd &cmd)
         return cmdKICK(c, cmd.args);
 
     /* Unknown command response */
-    sendTo(c, ":server NOTICE " + (c.nick.empty() ? "*" : c.nick) + " :Unknown command\r\n");
+    if (c.nick.empty())
+        sendTo(c, ":server NOTICE * :Unknown command\r\n");
+    else
+        sendTo(c, ":server NOTICE " + c.nick + " :Unknown command\r\n");
 }
